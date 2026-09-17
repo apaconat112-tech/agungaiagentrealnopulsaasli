@@ -251,7 +251,7 @@ async def group_summary_command(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as error:
         logger.exception("Selected group summary failed")
         await update.effective_message.reply_text(
-            f"Gagal mengambil atau merangkum grup ({type(error).__name__}). "
+            f"Gagal mengambil atau merangkum grup ({str(error)[:350]}). "
             "Coba lagi setelah deployment terbaru aktif."
         )
         return
@@ -462,7 +462,9 @@ async def hermes_completion(prompt: str, system_message: str) -> str:
                 ],
             },
         )
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text.replace("\n", " ")[:300]
+            raise RuntimeError(f"Hermes API HTTP {response.status_code}: {detail}")
         payload = response.json()
     return payload["choices"][0]["message"]["content"].strip()
 
