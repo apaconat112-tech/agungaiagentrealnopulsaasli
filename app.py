@@ -183,6 +183,24 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     save_user_state(update.effective_user.id, group_message_id=group_message.message_id)
 
 
+async def delete_replied_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    if not message.reply_to_message:
+        await message.reply_text("Reply pesan bot yang ingin dihapus, lalu kirim /hapus.")
+        return
+    try:
+        await context.bot.delete_message(
+            chat_id=message.chat_id,
+            message_id=message.reply_to_message.message_id,
+        )
+        await message.reply_text("Pesan lama sudah dihapus.")
+    except Exception:
+        logger.exception("Could not delete replied message")
+        await message.reply_text("Pesan itu tidak bisa dihapus oleh bot. Hapus manual dari Telegram.")
+
+
 async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -292,6 +310,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Pakai akun Telegram pribadi:\n"
         "/connect - tampilkan QR untuk menghubungkan akun\n"
         "/grup - tampilkan grup dan channel Anda\n"
+        "/hapus - hapus pesan bot dengan cara reply pesan tersebut\n"
         "Pilih tombol grup, lalu /summary_group\n"
         "/summary_group en - ringkas grup terpilih dalam Inggris\n"
         "Buka link login HTTPS yang dikirim bot. OTP dan password hanya dimasukkan di halaman itu.\n\n"
@@ -438,6 +457,7 @@ telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("connect", connect_start))
 telegram_app.add_handler(CommandHandler("grup", groups_command))
 telegram_app.add_handler(CommandHandler("groups", groups_command))
+telegram_app.add_handler(CommandHandler("hapus", delete_replied_message))
 telegram_app.add_handler(CommandHandler("summary_group", group_summary_command))
 telegram_app.add_handler(CallbackQueryHandler(select_group, pattern=r"^group:"))
 telegram_app.add_handler(CommandHandler("summary", summary_command))
