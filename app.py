@@ -49,6 +49,7 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "data/messages.db")
 HERMES_BASE_URL = os.getenv("HERMES_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 HERMES_API_KEY = os.environ["HERMES_API_KEY"]
 HERMES_MODEL = os.getenv("HERMES_MODEL", "Hermes-3-Llama-3.1-8B")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "Afung_12bot").lstrip("@")
 
 telegram_app = Application.builder().token(BOT_TOKEN).updater(None).build()
 pending_logins: dict[str, dict] = {}
@@ -583,7 +584,7 @@ async def finish_web_login(token: str, login: dict):
         await telegram_app.bot.send_message(login["user_id"], "Akun berhasil terhubung. Kirim /grup untuk memilih grup.")
     except Exception:
         logger.exception("Could not send Telegram login confirmation")
-    return HTMLResponse("""<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui;max-width:520px;margin:80px auto;padding:24px;background:#0d0b16;color:#f7f5ff}main{padding:28px;border:1px solid #3a3150;border-radius:18px;background:#1a1527}h1{margin-top:0;color:#c4b5fd}</style><main><h1>Berhasil terhubung</h1><p>Akun Telegram sudah tersambung. Kembali ke Telegram dan kirim <b>/grup</b>.</p></main>""")
+    return HTMLResponse(f"""<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:system-ui;max-width:520px;margin:80px auto;padding:24px;background:#0d0b16;color:#f7f5ff}}main{{padding:28px;border:1px solid #3a3150;border-radius:18px;background:#1a1527}}h1{{margin-top:0;color:#c4b5fd}}a{{display:block;text-align:center;margin-top:24px;padding:14px;border-radius:11px;background:#8b5cf6;color:white;text-decoration:none;font-weight:700}}</style><main><h1>Berhasil terhubung</h1><p>Akun Telegram sudah tersambung. Kembali ke Telegram dan kirim <b>/grup</b>.</p><a href="https://t.me/{TELEGRAM_BOT_USERNAME}">Kembali ke Telegram</a></main>""")
 
 
 @api.post("/telegram/webhook")
