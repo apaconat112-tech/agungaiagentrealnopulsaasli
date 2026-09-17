@@ -1,4 +1,5 @@
 import logging
+import io
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -6,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
+import qrcode
 from fastapi import FastAPI, Header, HTTPException, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
@@ -14,7 +16,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    ConversationHandler,
     MessageHandler,
     filters,
 )
@@ -131,88 +132,53 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
-        return ConversationHandler.END
-    await update.effective_message.reply_text(
-        "Kirim nomor Telegram dengan format internasional, contoh +628123456789.\n"
-        "Jangan kirim kode OTP ke tempat lain. /cancel untuk membatalkan."
-    )
-    return 1
-
-
-async def connect_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    phone = (update.effective_message.text or "").strip()
-    if not phone.startswith("+"):
-        await update.effective_message.reply_text("Nomor harus diawali + dan kode negara.")
-        return 1
+        return
     try:
         client = new_client()
         await client.connect()
-        sent_code = await client.send_code_request(phone)
+        qr_login = await client.qr_login()
     except Exception:
-        logger.exception("Telegram login code request failed")
-        await update.effective_message.reply_text("Gagal meminta kode Telegram. Periksa nomor lalu coba lagi.")
-        return ConversationHandler.END
-    context.user_data["connect_client"] = client
-    context.user_data["connect_phone"] = phone
-    context.user_data["connect_code_hash"] = sent_code.phone_code_hash
-    await update.effective_message.reply_text("Kirim kode login Telegram yang masuk ke aplikasi Telegram Anda.")
-    return 2
+        logger.exception("Telegram QR login creation failed")
+        await update.effective_message.reply_text("Gagal membuat QR login. Coba lagi nanti.")
+        return
+
+    image = qrcode.make(qr_login.url)
+    image_buffer = io.BytesIO()
+    image.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    await update.effective_message.reply_photo(
+        photo=image_buffer,
+        caption=(
+            "Scan QR ini dari Telegram: Settings > Devices > Link Desktop Device.\n"
+            "Jangan kirim OTP atau password ke bot. QR berlaku sebentar."
+        ),
+    )
+    context.application.create_task(
+        finish_qr_login(qr_login, client, update.effective_user.id, context.bot)
+    )
 
 
-async def connect_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    client = context.user_data.get("connect_client")
-    if not client:
-        await update.effective_message.reply_text("Sesi login kedaluwarsa. Jalankan /connect lagi.")
-        return ConversationHandler.END
+async def finish_qr_login(qr_login, client, user_id: int, bot) -> None:
     try:
-        await client.sign_in(
-            phone=context.user_data["connect_phone"],
-            code=(update.effective_message.text or "").strip(),
-            phone_code_hash=context.user_data["connect_code_hash"],
+        await qr_login.wait()
+        save_session(user_id, client.session.save())
+        await bot.send_message(
+            user_id,
+            "Akun berhasil terhubung. Sekarang kirim /grup untuk memilih grup.",
         )
     except SessionPasswordNeededError:
-        await update.effective_message.reply_text("Akun memakai verifikasi dua langkah. Kirim password 2FA Anda.")
-        return 3
+        await bot.send_message(
+            user_id,
+            "Akun memakai 2FA. Demi keamanan, password tidak boleh dikirim lewat bot. "
+            "Gunakan akun tanpa 2FA untuk QR ini atau minta alur login web aman.",
+        )
     except Exception:
-        logger.exception("Telegram login failed")
+        logger.exception("Telegram QR login failed")
+        await bot.send_message(user_id, "QR login gagal atau kedaluwarsa. Jalankan /connect lagi.")
+    finally:
         await client.disconnect()
-        await update.effective_message.reply_text("Kode salah atau sudah kedaluwarsa. Jalankan /connect lagi.")
-        return ConversationHandler.END
-    await save_user_session(update, context, client)
-    return ConversationHandler.END
-
-
-async def connect_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    client = context.user_data.get("connect_client")
-    if not client:
-        await update.effective_message.reply_text("Sesi login kedaluwarsa. Jalankan /connect lagi.")
-        return ConversationHandler.END
-    try:
-        await client.sign_in(password=(update.effective_message.text or "").strip())
-    except Exception:
-        logger.exception("Telegram 2FA login failed")
-        await client.disconnect()
-        await update.effective_message.reply_text("Password 2FA salah. Jalankan /connect lagi.")
-        return ConversationHandler.END
-    await save_user_session(update, context, client)
-    return ConversationHandler.END
-
-
-async def save_user_session(update: Update, context: ContextTypes.DEFAULT_TYPE, client) -> None:
-    save_session(update.effective_user.id, client.session.save())
-    await client.disconnect()
-    context.user_data.pop("connect_client", None)
-    await update.effective_message.reply_text("Akun berhasil terhubung. Sekarang kirim /grup untuk melihat grup Anda.")
-
-
-async def cancel_connect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    client = context.user_data.pop("connect_client", None)
-    if client:
-        await client.disconnect()
-    await update.effective_message.reply_text("Login dibatalkan.")
-    return ConversationHandler.END
 
 
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -335,11 +301,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.effective_message.reply_text(
         "Bantuan Hermes Bot\n\n"
         "Pakai akun Telegram pribadi:\n"
-        "/connect - hubungkan akun Telegram Anda\n"
+        "/connect - tampilkan QR untuk menghubungkan akun\n"
         "/grup - tampilkan grup dan channel Anda\n"
         "Pilih tombol grup, lalu /summary_group\n"
         "/summary_group en - ringkas grup terpilih dalam Inggris\n"
-        "/cancel - batalkan proses login\n\n"
+        "Scan QR dari Telegram > Settings > Devices > Link Desktop Device.\n\n"
         "Ringkasan:\n"
         "/summary - ringkas pesan 24 jam terakhir\n"
         "/summary 6 - ringkas pesan 6 jam terakhir\n"
@@ -480,19 +446,7 @@ async def hermes_completion(prompt: str, system_message: str) -> str:
 
 telegram_app.add_handler(CommandHandler("start", start_command))
 telegram_app.add_handler(CommandHandler("help", help_command))
-telegram_app.add_handler(
-    ConversationHandler(
-        entry_points=[CommandHandler("connect", connect_start)],
-        states={
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone)],
-            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_code)],
-            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_password)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_connect)],
-        per_user=True,
-        per_chat=True,
-    )
-)
+telegram_app.add_handler(CommandHandler("connect", connect_start))
 telegram_app.add_handler(CommandHandler("grup", groups_command))
 telegram_app.add_handler(CommandHandler("groups", groups_command))
 telegram_app.add_handler(CommandHandler("summary_group", group_summary_command))
