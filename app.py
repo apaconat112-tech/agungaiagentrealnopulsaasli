@@ -7,14 +7,25 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ConversationHandler,
     MessageHandler,
     filters,
+)
+from telethon.errors import SessionPasswordNeededError
+
+from telegram_user import (
+    init_user_table,
+    list_groups,
+    new_client,
+    read_group_messages,
+    save_session,
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -55,6 +66,7 @@ def init_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at)"
         )
+    init_user_table()
 
 
 def save_message(chat_id: int, chat_title: str, user_name: str, text: str) -> None:
@@ -111,10 +123,153 @@ async def collect_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         "Bot aktif.\n\n"
+        "Gunakan /connect untuk menghubungkan akun Telegram Anda.\n"
+        "Gunakan /grup untuk memilih grup dari akun Anda.\n"
         "Grup: admin gunakan /summary.\n"
         "Privat: forward chat penting ke sini, lalu gunakan /summary.\n"
         "Terjemahan: /translate en teks atau reply pesan dengan /translate id."
     )
+
+
+async def connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
+        return ConversationHandler.END
+    await update.effective_message.reply_text(
+        "Kirim nomor Telegram dengan format internasional, contoh +628123456789.\n"
+        "Jangan kirim kode OTP ke tempat lain. /cancel untuk membatalkan."
+    )
+    return 1
+
+
+async def connect_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    phone = (update.effective_message.text or "").strip()
+    if not phone.startswith("+"):
+        await update.effective_message.reply_text("Nomor harus diawali + dan kode negara.")
+        return 1
+    try:
+        client = new_client()
+        await client.connect()
+        sent_code = await client.send_code_request(phone)
+    except Exception:
+        logger.exception("Telegram login code request failed")
+        await update.effective_message.reply_text("Gagal meminta kode Telegram. Periksa nomor lalu coba lagi.")
+        return ConversationHandler.END
+    context.user_data["connect_client"] = client
+    context.user_data["connect_phone"] = phone
+    context.user_data["connect_code_hash"] = sent_code.phone_code_hash
+    await update.effective_message.reply_text("Kirim kode login Telegram yang masuk ke aplikasi Telegram Anda.")
+    return 2
+
+
+async def connect_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    client = context.user_data.get("connect_client")
+    if not client:
+        await update.effective_message.reply_text("Sesi login kedaluwarsa. Jalankan /connect lagi.")
+        return ConversationHandler.END
+    try:
+        await client.sign_in(
+            phone=context.user_data["connect_phone"],
+            code=(update.effective_message.text or "").strip(),
+            phone_code_hash=context.user_data["connect_code_hash"],
+        )
+    except SessionPasswordNeededError:
+        await update.effective_message.reply_text("Akun memakai verifikasi dua langkah. Kirim password 2FA Anda.")
+        return 3
+    except Exception:
+        logger.exception("Telegram login failed")
+        await client.disconnect()
+        await update.effective_message.reply_text("Kode salah atau sudah kedaluwarsa. Jalankan /connect lagi.")
+        return ConversationHandler.END
+    await save_user_session(update, context, client)
+    return ConversationHandler.END
+
+
+async def connect_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    client = context.user_data.get("connect_client")
+    if not client:
+        await update.effective_message.reply_text("Sesi login kedaluwarsa. Jalankan /connect lagi.")
+        return ConversationHandler.END
+    try:
+        await client.sign_in(password=(update.effective_message.text or "").strip())
+    except Exception:
+        logger.exception("Telegram 2FA login failed")
+        await client.disconnect()
+        await update.effective_message.reply_text("Password 2FA salah. Jalankan /connect lagi.")
+        return ConversationHandler.END
+    await save_user_session(update, context, client)
+    return ConversationHandler.END
+
+
+async def save_user_session(update: Update, context: ContextTypes.DEFAULT_TYPE, client) -> None:
+    save_session(update.effective_user.id, client.session.save())
+    await client.disconnect()
+    context.user_data.pop("connect_client", None)
+    await update.effective_message.reply_text("Akun berhasil terhubung. Sekarang kirim /grup untuk melihat grup Anda.")
+
+
+async def cancel_connect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    client = context.user_data.pop("connect_client", None)
+    if client:
+        await client.disconnect()
+    await update.effective_message.reply_text("Login dibatalkan.")
+    return ConversationHandler.END
+
+
+async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
+        return
+    try:
+        groups = await list_groups(update.effective_user.id)
+    except Exception as error:
+        await update.effective_message.reply_text(str(error))
+        return
+    if not groups:
+        await update.effective_message.reply_text("Tidak ada grup atau channel yang bisa dibaca.")
+        return
+    context.user_data["groups"] = {str(group["id"]): group["name"] for group in groups}
+    buttons = [
+        [InlineKeyboardButton(str(group["name"])[:55], callback_data=f"group:{group['id']}")]
+        for group in groups[:40]
+    ]
+    await update.effective_message.reply_text(
+        "Pilih grup yang ingin diringkas:", reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    group_id = query.data.split(":", 1)[1]
+    group_name = context.user_data.get("groups", {}).get(group_id, "Grup terpilih")
+    context.user_data["selected_group_id"] = int(group_id)
+    context.user_data["selected_group_name"] = group_name
+    await query.edit_message_text(
+        f"Grup dipilih: {group_name}\nKirim /summary_group untuk merangkum 200 pesan terakhir."
+    )
+
+
+async def group_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
+        return
+    group_id = context.user_data.get("selected_group_id")
+    if not group_id:
+        await update.effective_message.reply_text("Kirim /grup dulu, lalu pilih grup.")
+        return
+    target_language = LANGUAGE_ALIASES.get(context.args[0].lower(), context.args[0]) if context.args else "Bahasa Indonesia"
+    await update.effective_message.reply_text("Sedang mengambil chat dan membuat ringkasan...")
+    try:
+        messages = await read_group_messages(update.effective_user.id, group_id)
+        transcript = "\n".join(
+            f"[{message['created_at']}] {message['name']}: {message['text']}" for message in messages
+        )
+        summary = await summarize_with_hermes(transcript, 24, target_language)
+    except Exception:
+        logger.exception("Selected group summary failed")
+        await update.effective_message.reply_text("Gagal mengambil atau merangkum grup tersebut.")
+        return
+    context.user_data["last_summary"] = summary
+    for part in split_message(summary):
+        await update.effective_message.reply_text(part)
 
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -179,6 +334,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     await update.effective_message.reply_text(
         "Bantuan Hermes Bot\n\n"
+        "Pakai akun Telegram pribadi:\n"
+        "/connect - hubungkan akun Telegram Anda\n"
+        "/grup - tampilkan grup dan channel Anda\n"
+        "Pilih tombol grup, lalu /summary_group\n"
+        "/summary_group en - ringkas grup terpilih dalam Inggris\n"
+        "/cancel - batalkan proses login\n\n"
         "Ringkasan:\n"
         "/summary - ringkas pesan 24 jam terakhir\n"
         "/summary 6 - ringkas pesan 6 jam terakhir\n"
@@ -209,10 +370,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "tr = Turki\n"
         "ms = Melayu\n\n"
         "Contoh: /translate ja Selamat pagi\n\n"
-        "Mode privat:\n"
-        "Forward pesan dari grup atau channel ke chat bot, lalu kirim /summary.\n\n"
-        "Mode grup:\n"
-        "Bot mengumpulkan teks setelah ditambahkan. Hanya admin yang dapat meminta summary."
+        "Mode grup lama:\n"
+        "Bot mengumpulkan teks setelah ditambahkan. Hanya admin yang dapat meminta summary.\n\n"
+        "Catatan: /grup memakai akun Telegram Anda, jadi bot tidak perlu masuk ke grup."
     )
 
 
@@ -320,6 +480,23 @@ async def hermes_completion(prompt: str, system_message: str) -> str:
 
 telegram_app.add_handler(CommandHandler("start", start_command))
 telegram_app.add_handler(CommandHandler("help", help_command))
+telegram_app.add_handler(
+    ConversationHandler(
+        entry_points=[CommandHandler("connect", connect_start)],
+        states={
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone)],
+            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_code)],
+            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_password)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_connect)],
+        per_user=True,
+        per_chat=True,
+    )
+)
+telegram_app.add_handler(CommandHandler("grup", groups_command))
+telegram_app.add_handler(CommandHandler("groups", groups_command))
+telegram_app.add_handler(CommandHandler("summary_group", group_summary_command))
+telegram_app.add_handler(CallbackQueryHandler(select_group, pattern=r"^group:"))
 telegram_app.add_handler(CommandHandler("summary", summary_command))
 telegram_app.add_handler(CommandHandler("digest", summary_command))
 telegram_app.add_handler(CommandHandler("translate", translate_command))
