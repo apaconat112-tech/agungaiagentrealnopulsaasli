@@ -1,14 +1,14 @@
 import logging
-import io
 import os
+import secrets
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-import qrcode
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Form, Header, HTTPException, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import (
@@ -41,6 +41,7 @@ HERMES_API_KEY = os.environ["HERMES_API_KEY"]
 HERMES_MODEL = os.getenv("HERMES_MODEL", "Hermes-3-Llama-3.1-8B")
 
 telegram_app = Application.builder().token(BOT_TOKEN).updater(None).build()
+pending_logins: dict[str, dict] = {}
 
 
 def get_db() -> sqlite3.Connection:
@@ -135,50 +136,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
         return
-    try:
-        client = new_client()
-        await client.connect()
-        qr_login = await client.qr_login()
-    except Exception:
-        logger.exception("Telegram QR login creation failed")
-        await update.effective_message.reply_text("Gagal membuat QR login. Coba lagi nanti.")
-        return
-
-    image = qrcode.make(qr_login.url)
-    image_buffer = io.BytesIO()
-    image.save(image_buffer, format="PNG")
-    image_buffer.seek(0)
-    await update.effective_message.reply_photo(
-        photo=image_buffer,
-        caption=(
-            "Scan QR ini dari Telegram: Settings > Devices > Link Desktop Device.\n"
-            "Jangan kirim OTP atau password ke bot. QR berlaku sebentar."
-        ),
-    )
-    context.application.create_task(
-        finish_qr_login(qr_login, client, update.effective_user.id, context.bot)
+    token = secrets.token_urlsafe(32)
+    pending_logins[token] = {"user_id": update.effective_user.id, "created_at": time.time()}
+    await update.effective_message.reply_text(
+        f"Buka link aman ini untuk menghubungkan akun Telegram Anda:\n{WEBHOOK_URL}/login/{token}\n\n"
+        "Link berlaku 10 menit. Nomor, kode login, dan password 2FA hanya dimasukkan di halaman tersebut, bukan ke chat bot."
     )
 
 
-async def finish_qr_login(qr_login, client, user_id: int, bot) -> None:
-    try:
-        await qr_login.wait()
-        save_session(user_id, client.session.save())
-        await bot.send_message(
-            user_id,
-            "Akun berhasil terhubung. Sekarang kirim /grup untuk memilih grup.",
-        )
-    except SessionPasswordNeededError:
-        await bot.send_message(
-            user_id,
-            "Akun memakai 2FA. Demi keamanan, password tidak boleh dikirim lewat bot. "
-            "Gunakan akun tanpa 2FA untuk QR ini atau minta alur login web aman.",
-        )
-    except Exception:
-        logger.exception("Telegram QR login failed")
-        await bot.send_message(user_id, "QR login gagal atau kedaluwarsa. Jalankan /connect lagi.")
-    finally:
-        await client.disconnect()
+def get_pending_login(token: str) -> dict:
+    login = pending_logins.get(token)
+    if not login or time.time() - login["created_at"] > 600:
+        pending_logins.pop(token, None)
+        raise HTTPException(status_code=410, detail="Link login sudah kedaluwarsa")
+    return login
 
 
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -305,7 +276,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/grup - tampilkan grup dan channel Anda\n"
         "Pilih tombol grup, lalu /summary_group\n"
         "/summary_group en - ringkas grup terpilih dalam Inggris\n"
-        "Scan QR dari Telegram > Settings > Devices > Link Desktop Device.\n\n"
+        "Buka link login HTTPS yang dikirim bot. OTP dan password hanya dimasukkan di halaman itu.\n\n"
         "Ringkasan:\n"
         "/summary - ringkas pesan 24 jam terakhir\n"
         "/summary 6 - ringkas pesan 6 jam terakhir\n"
@@ -483,6 +454,75 @@ api = FastAPI(title="Hermes Telegram Summarizer", lifespan=lifespan)
 @api.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def login_page(token: str, message: str = "", step: str = "phone") -> str:
+    field = "phone" if step == "phone" else "code" if step == "code" else "password"
+    label = "Nomor Telegram (+kode negara)" if field == "phone" else "Kode login Telegram" if field == "code" else "Password 2FA Telegram"
+    return f"""<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hubungkan Telegram</title><style>body{{font-family:system-ui;max-width:520px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}main{{background:#202020;padding:24px;border-radius:12px}}input,button{{width:100%;box-sizing:border-box;padding:12px;margin-top:8px;border-radius:8px;border:1px solid #555;font-size:16px}}button{{background:#7c3aed;color:white;border:0;margin-top:18px}}.note{{color:#aaa;line-height:1.5}}.error{{color:#ff9b9b}}</style></head><body><main><h1>Hubungkan akun Telegram</h1><p class="note">Data login dipakai sementara dan tidak disimpan. Jangan bagikan link ini.</p>{f'<p class="error">{message}</p>' if message else ''}<form method="post" action="/login/{token}/{field}"><label>{label}</label><input name="value" type="password" autocomplete="off" required><button type="submit">Lanjutkan</button></form></main></body></html>"""
+
+
+@api.get("/login/{token}")
+async def login_form(token: str):
+    get_pending_login(token)
+    return login_page(token)
+
+
+@api.post("/login/{token}/phone")
+async def login_phone(token: str, value: str = Form(...)):
+    login = get_pending_login(token)
+    phone = value.strip()
+    if not phone.startswith("+"):
+        return login_page(token, "Nomor harus diawali + dan kode negara.")
+    client = new_client()
+    try:
+        await client.connect()
+        sent_code = await client.send_code_request(phone)
+    except Exception:
+        await client.disconnect()
+        logger.exception("Telegram web login code request failed")
+        return login_page(token, "Tidak bisa meminta kode. Periksa nomor dan coba lagi.")
+    login.update(client=client, phone=phone, phone_code_hash=sent_code.phone_code_hash)
+    return login_page(token, step="code")
+
+
+@api.post("/login/{token}/code")
+async def login_code(token: str, value: str = Form(...)):
+    login = get_pending_login(token)
+    client = login.get("client")
+    if not client:
+        return login_page(token, "Sesi login sudah kedaluwarsa.")
+    try:
+        await client.sign_in(phone=login["phone"], code=value.strip(), phone_code_hash=login["phone_code_hash"])
+    except SessionPasswordNeededError:
+        return login_page(token, step="password")
+    except Exception:
+        await client.disconnect()
+        return login_page(token, "Kode salah atau sudah kedaluwarsa.", step="code")
+    return await finish_web_login(token, login)
+
+
+@api.post("/login/{token}/password")
+async def login_password(token: str, value: str = Form(...)):
+    login = get_pending_login(token)
+    client = login.get("client")
+    if not client:
+        return login_page(token, "Sesi login sudah kedaluwarsa.")
+    try:
+        await client.sign_in(password=value)
+    except Exception:
+        await client.disconnect()
+        return login_page(token, "Password 2FA salah.", step="password")
+    return await finish_web_login(token, login)
+
+
+async def finish_web_login(token: str, login: dict):
+    client = login["client"]
+    save_session(login["user_id"], client.session.save())
+    await client.disconnect()
+    pending_logins.pop(token, None)
+    await telegram_app.bot.send_message(login["user_id"], "Akun berhasil terhubung. Kirim /grup untuk memilih grup.")
+    return "<h2>Berhasil</h2><p>Akun Telegram sudah terhubung. Kembali ke Telegram dan kirim /grup.</p>"
 
 
 @api.post("/telegram/webhook")
