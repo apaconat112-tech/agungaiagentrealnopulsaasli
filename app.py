@@ -1,4 +1,5 @@
 import logging
+import html
 import os
 import secrets
 import time
@@ -469,7 +470,19 @@ async def health() -> dict[str, str]:
 def login_page(token: str, message: str = "", step: str = "phone") -> str:
     field = "phone" if step == "phone" else "code" if step == "code" else "password"
     label = "Nomor Telegram (+kode negara)" if field == "phone" else "Kode login Telegram" if field == "code" else "Password 2FA Telegram"
-    return f"""<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hubungkan Telegram</title><style>body{{font-family:system-ui;max-width:520px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}main{{background:#202020;padding:24px;border-radius:12px}}input,button{{width:100%;box-sizing:border-box;padding:12px;margin-top:8px;border-radius:8px;border:1px solid #555;font-size:16px}}button{{background:#7c3aed;color:white;border:0;margin-top:18px}}.note{{color:#aaa;line-height:1.5}}.error{{color:#ff9b9b}}</style></head><body><main><h1>Hubungkan akun Telegram</h1><p class="note">Data login dipakai sementara dan tidak disimpan. Jangan bagikan link ini.</p>{f'<p class="error">{message}</p>' if message else ''}<form method="post" action="/login/{token}/{field}"><label>{label}</label><input name="value" type="password" autocomplete="off" required><button type="submit">Lanjutkan</button></form></main></body></html>"""
+    input_type = "password" if field == "password" else "text"
+    title = "Hubungkan Telegram"
+    safe_message = html.escape(message)
+    safe_token = html.escape(token, quote=True)
+    return f"""<!doctype html>
+<html lang="id"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>{title}</title>
+<style>
+:root{{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f7f5ff;background:#0d0b16}}
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 15% 10%,#39235f 0,#0d0b16 42%),#0d0b16}}
+.shell{{width:min(100%,480px)}}.brand{{display:flex;align-items:center;gap:10px;margin:0 0 18px 4px;font-weight:700;letter-spacing:.2px}}.mark{{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#8b5cf6;color:white;font-size:18px}}
+main{{padding:30px;border:1px solid #3a3150;border-radius:20px;background:rgba(26,21,39,.92);box-shadow:0 24px 70px rgba(0,0,0,.38)}}h1{{margin:0;font-size:28px;line-height:1.1}}.step{{margin:10px 0 0;color:#a9a1bb;font-size:14px}}.note{{margin:24px 0;color:#c5bdd5;line-height:1.55;font-size:14px}}label{{display:block;margin-top:22px;font-size:14px;font-weight:650}}input{{width:100%;margin-top:9px;padding:14px 15px;border:1px solid #51466c;border-radius:11px;background:#120f1d;color:#fff;font-size:16px;outline:none}}input:focus{{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.18)}}button{{width:100%;margin-top:18px;padding:14px;border:0;border-radius:11px;background:#8b5cf6;color:#fff;font-size:15px;font-weight:700;cursor:pointer}}button:hover{{background:#9b75f7}}.error{{margin:18px 0 0;padding:12px 14px;border:1px solid #7f3847;border-radius:10px;background:#351923;color:#ffb4be;font-size:14px;line-height:1.45}}
+.privacy{{margin:18px 2px 0;color:#827a96;font-size:12px;line-height:1.5;text-align:center}}
+</style></head><body><div class="shell"><div class="brand"><span class="mark">H</span><span>Hermes Telegram</span></div><main><h1>{title}</h1><p class="step">Langkah verifikasi akun Anda</p><p class="note">Data ini hanya dipakai untuk proses login sementara. Jangan bagikan link ini kepada siapa pun.</p>{f'<p class="error">{safe_message}</p>' if message else ''}<form method="post" action="/login/{safe_token}/{field}"><label for="value">{label}</label><input id="value" name="value" type="{input_type}" autocomplete="off" required autofocus><button type="submit">Lanjutkan</button></form></main><p class="privacy">Koneksi terenkripsi melalui HTTPS</p></div></body></html>"""
 
 
 @api.get("/login/{token}", response_class=HTMLResponse)
@@ -528,14 +541,23 @@ async def login_password(token: str, value: str = Form(...)):
 
 async def finish_web_login(token: str, login: dict):
     client = login["client"]
-    save_session(login["user_id"], client.session.save())
-    await client.disconnect()
+    try:
+        save_session(login["user_id"], client.session.save())
+    except Exception:
+        logger.exception("Could not save Telegram session")
+        await client.disconnect()
+        return HTMLResponse(login_page(token, "Session gagal disimpan. Periksa koneksi database Railway."), status_code=500)
+    finally:
+        if not client.is_connected():
+            pending_logins.pop(token, None)
+        else:
+            await client.disconnect()
     pending_logins.pop(token, None)
-    await telegram_app.bot.send_message(login["user_id"], "Akun berhasil terhubung. Kirim /grup untuk memilih grup.")
-    return HTMLResponse(
-        "<h2>Berhasil</h2><p>Akun Telegram sudah terhubung. "
-        "Kembali ke Telegram dan kirim /grup.</p>"
-    )
+    try:
+        await telegram_app.bot.send_message(login["user_id"], "Akun berhasil terhubung. Kirim /grup untuk memilih grup.")
+    except Exception:
+        logger.exception("Could not send Telegram login confirmation")
+    return HTMLResponse("""<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui;max-width:520px;margin:80px auto;padding:24px;background:#0d0b16;color:#f7f5ff}main{padding:28px;border:1px solid #3a3150;border-radius:18px;background:#1a1527}h1{margin-top:0;color:#c4b5fd}</style><main><h1>Berhasil terhubung</h1><p>Akun Telegram sudah tersambung. Kembali ke Telegram dan kirim <b>/grup</b>.</p></main>""")
 
 
 @api.post("/telegram/webhook")
