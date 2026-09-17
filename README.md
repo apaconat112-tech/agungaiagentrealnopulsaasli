@@ -5,9 +5,14 @@ Bot Telegram cloud-ready untuk menyimpan percakapan grup dan membuat ringkasan d
 ## Fitur
 
 - Webhook Telegram, jadi laptop tidak perlu menyala.
-- Menyimpan pesan grup ke SQLite.
+- Menyimpan pesan grup dan pesan privat ke SQLite.
 - `/summary` merangkum 24 jam terakhir.
 - `/summary 6` merangkum 6 jam terakhir.
+- Menyaring basa-basi dan hanya mempertahankan berita, keputusan, tugas, tenggat, dan perubahan penting.
+- Mode privat: forward pesan dari grup atau channel ke bot, lalu gunakan `/summary`; bot tidak perlu masuk grup tersebut.
+- `/translate en teks` menerjemahkan ke Inggris; tersedia `id`, `en`, `de`, `fr`, dan `th`.
+- `/help` menampilkan panduan command dan mode penggunaan.
+- Target translate dapat berupa nama bahasa bebas, misalnya `Japanese`, `Arabic`, atau `Korean`.
 - Hanya admin grup yang dapat meminta ringkasan.
 - Bisa diarahkan ke Hermes lokal, gateway cloud, atau endpoint OpenAI-compatible lain lewat environment variables.
 
@@ -24,6 +29,8 @@ Webhook membutuhkan URL HTTPS publik. Saat development, gunakan tunnel seperti C
 Deploy sebagai web service Docker. Set semua variable dari `.env.example` di dashboard provider, gunakan port `8000`, dan pasang persistent volume pada `/app/data` agar database tidak hilang saat container restart.
 
 Setelah deploy, tambahkan bot ke grup dan matikan **Group Privacy** bot melalui BotFather agar bot dapat membaca pesan biasa. Bot hanya menyimpan teks yang dikirim setelah bot aktif.
+
+Untuk mode privat, buka chat bot lalu forward pesan yang ingin dipantau. Kirim `/summary` di chat bot. Telegram tidak mengizinkan bot membaca grup yang tidak diikutinya; forward adalah cara resmi tanpa memasukkan bot ke grup. Untuk menerjemahkan, kirim `/translate de teks` atau reply pesan dengan `/translate id`. Nama bahasa dapat ditulis bebas; hasil terbaik tetap bergantung pada kemampuan Hermes terhadap bahasa tersebut.
 
 ## Keamanan
 

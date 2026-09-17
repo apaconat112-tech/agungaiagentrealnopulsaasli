@@ -7,7 +7,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
-from telegram import Bot, Update
+from telegram import Update
 from telegram.constants import ChatType
 from telegram.ext import (
     Application,
@@ -91,12 +91,18 @@ async def collect_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-    if not message or not chat or not user or chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+    if not message or not chat or not user:
         return
     if message.text and not message.text.startswith("/"):
+        if chat.type == ChatType.PRIVATE:
+            chat_title = f"Private chat: {user.full_name}"
+        elif chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            chat_title = chat.title or "Telegram group"
+        else:
+            return
         save_message(
             chat.id,
-            chat.title or "Telegram group",
+            chat_title,
             user.full_name,
             message.text.strip(),
         )
@@ -104,18 +110,24 @@ async def collect_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
-        "Bot aktif. Admin bisa memakai /summary untuk merangkum percakapan 24 jam terakhir."
+        "Bot aktif.\n\n"
+        "Grup: admin gunakan /summary.\n"
+        "Privat: forward chat penting ke sini, lalu gunakan /summary.\n"
+        "Terjemahan: /translate en teks atau reply pesan dengan /translate id."
     )
 
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_chat or not update.effective_message:
         return
-    if update.effective_chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
-        await update.effective_message.reply_text("Gunakan perintah ini di dalam grup.")
-        return
-    if not await is_admin(update, context):
+    if update.effective_chat.type in {ChatType.GROUP, ChatType.SUPERGROUP} and not await is_admin(update, context):
         await update.effective_message.reply_text("Hanya admin grup yang bisa meminta ringkasan.")
+        return
+    if update.effective_chat.type not in {
+        ChatType.PRIVATE,
+        ChatType.GROUP,
+        ChatType.SUPERGROUP,
+    }:
         return
 
     hours = 24
@@ -143,12 +155,93 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.effective_message.reply_text(part)
 
 
+LANGUAGE_ALIASES = {
+    "id": "Bahasa Indonesia",
+    "indonesia": "Bahasa Indonesia",
+    "en": "English",
+    "inggris": "English",
+    "de": "German",
+    "jerman": "German",
+    "fr": "French",
+    "prancis": "French",
+    "th": "Thai",
+    "thailand": "Thai",
+}
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_message:
+        return
+    await update.effective_message.reply_text(
+        "Bantuan Hermes Bot\n\n"
+        "Ringkasan:\n"
+        "/summary - ringkas pesan 24 jam terakhir\n"
+        "/summary 6 - ringkas pesan 6 jam terakhir\n"
+        "/digest - alias /summary\n\n"
+        "Translate:\n"
+        "/translate en teks\n"
+        "/translate Japanese teks\n"
+        "Atau reply pesan lalu kirim /translate id\n"
+        "Bisa memakai kode atau nama bahasa yang didukung Hermes.\n\n"
+        "Mode privat:\n"
+        "Forward pesan dari grup atau channel ke chat bot, lalu kirim /summary.\n\n"
+        "Mode grup:\n"
+        "Bot mengumpulkan teks setelah ditambahkan. Hanya admin yang dapat meminta summary."
+    )
+
+
+async def translate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    target_key = context.args[0].lower() if context.args else ""
+    target = LANGUAGE_ALIASES.get(target_key, context.args[0] if context.args else "")
+    if not target or len(target) > 60:
+        await message.reply_text(
+            "Format: /translate <bahasa> <teks>\n"
+            "Contoh: /translate English Halo dunia\n"
+            "Bisa memakai kode atau nama bahasa, misalnya id, en, Japanese, Arab, Korean."
+        )
+        return
+
+    source_text = " ".join(context.args[1:]).strip()
+    if not source_text and message.reply_to_message:
+        source_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+    if not source_text:
+        await message.reply_text("Tulis teks setelah nama bahasa atau reply pesan yang ingin diterjemahkan.")
+        return
+
+    try:
+        translation = await translate_with_hermes(source_text, LANGUAGES[target])
+    except Exception:
+        logger.exception("Hermes translation request failed")
+        await message.reply_text("Gagal menerjemahkan. Coba lagi beberapa saat lagi.")
+        return
+    await message.reply_text(translation)
+
+
 async def summarize_with_hermes(transcript: str, hours: int) -> str:
     prompt = (
-        f"Ringkas percakapan grup Telegram berikut untuk {hours} jam terakhir dalam bahasa Indonesia. "
-        "Susun dengan bagian: topik utama, keputusan, tugas atau tindak lanjut, dan pertanyaan terbuka. "
-        "Jangan mengarang informasi yang tidak ada.\n\n" + transcript
+        f"Analisis percakapan Telegram berikut untuk {hours} jam terakhir. "
+        "Abaikan sapaan, basa-basi, candaan, pengulangan, dan pesan tanpa informasi baru. "
+        "Pertahankan hanya berita, fakta, perubahan penting, keputusan, tenggat, tugas, risiko, "
+        "pertanyaan yang belum terjawab, atau informasi yang bisa membuat pembaca ketinggalan konteks. "
+        "Jika tidak ada hal penting, katakan persis: Tidak ada informasi penting. "
+        "Tulis dalam bahasa Indonesia dengan bagian: Ringkasan penting, Keputusan dan tugas, "
+        "Berita atau perubahan, dan Pertanyaan terbuka. Jangan mengarang.\n\n" + transcript
     )
+    return await hermes_completion(prompt, "Anda adalah editor berita yang teliti dan anti-halu.")
+
+
+async def translate_with_hermes(text: str, target_language: str) -> str:
+    prompt = (
+        f"Terjemahkan teks berikut ke {target_language}. Pertahankan makna, nama, angka, "
+        "tautan, dan format. Jangan beri penjelasan tambahan.\n\n{text}"
+    )
+    return await hermes_completion(prompt, "Anda adalah penerjemah profesional yang akurat.")
+
+
+async def hermes_completion(prompt: str, system_message: str) -> str:
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post(
             f"{HERMES_BASE_URL}/chat/completions",
@@ -159,7 +252,7 @@ async def summarize_with_hermes(transcript: str, hours: int) -> str:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "Anda adalah asisten yang teliti dalam merangkum percakapan.",
+                        "content": system_message,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -171,7 +264,10 @@ async def summarize_with_hermes(transcript: str, hours: int) -> str:
 
 
 telegram_app.add_handler(CommandHandler("start", start_command))
+telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("summary", summary_command))
+telegram_app.add_handler(CommandHandler("digest", summary_command))
+telegram_app.add_handler(CommandHandler("translate", translate_command))
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, collect_message)
 )
