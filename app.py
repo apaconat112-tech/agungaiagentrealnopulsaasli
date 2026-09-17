@@ -131,8 +131,12 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     hours = 24
-    if context.args and context.args[0].isdigit():
-        hours = max(1, min(int(context.args[0]), 168))
+    target_language = "Bahasa Indonesia"
+    for argument in context.args:
+        if argument.isdigit():
+            hours = max(1, min(int(argument), 168))
+        else:
+            target_language = LANGUAGE_ALIASES.get(argument.lower(), argument)
     messages = read_messages(update.effective_chat.id, hours)
     if not messages:
         await update.effective_message.reply_text(f"Belum ada pesan dalam {hours} jam terakhir.")
@@ -143,7 +147,7 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
     await update.effective_message.reply_text("Sedang membuat ringkasan...")
     try:
-        summary = await summarize_with_hermes(transcript, hours)
+        summary = await summarize_with_hermes(transcript, hours, target_language)
     except Exception:
         logger.exception("Hermes request failed")
         await update.effective_message.reply_text(
@@ -151,6 +155,7 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
+    context.user_data["last_summary"] = summary
     for part in split_message(summary):
         await update.effective_message.reply_text(part)
 
@@ -177,10 +182,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Ringkasan:\n"
         "/summary - ringkas pesan 24 jam terakhir\n"
         "/summary 6 - ringkas pesan 6 jam terakhir\n"
+        "/summary en - ringkas langsung dalam Inggris\n"
         "/digest - alias /summary\n\n"
         "Translate:\n"
         "/translate en teks\n"
         "/translate Japanese teks\n"
+        "/translate_summary en - terjemahkan ringkasan terakhir\n"
         "Atau reply pesan lalu kirim /translate id\n"
         "Daftar kode bahasa:\n"
         "id = Indonesia\n"
@@ -239,15 +246,44 @@ async def translate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await message.reply_text(translation)
 
 
-async def summarize_with_hermes(transcript: str, hours: int) -> str:
+async def translate_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    if not context.args:
+        await message.reply_text("Format: /translate_summary en")
+        return
+    target_key = context.args[0].lower()
+    target = LANGUAGE_ALIASES.get(target_key, context.args[0])
+    summary = context.user_data.get("last_summary")
+    if not summary:
+        await message.reply_text("Belum ada ringkasan. Jalankan /summary terlebih dahulu.")
+        return
+    try:
+        translation = await translate_with_hermes(summary, target)
+    except Exception:
+        logger.exception("Hermes summary translation request failed")
+        await message.reply_text("Gagal menerjemahkan ringkasan. Coba lagi nanti.")
+        return
+    for part in split_message(translation):
+        await message.reply_text(part)
+
+
+async def summarize_with_hermes(
+    transcript: str, hours: int, target_language: str = "Bahasa Indonesia"
+) -> str:
     prompt = (
         f"Analisis percakapan Telegram berikut untuk {hours} jam terakhir. "
         "Abaikan sapaan, basa-basi, candaan, pengulangan, dan pesan tanpa informasi baru. "
         "Pertahankan hanya berita, fakta, perubahan penting, keputusan, tenggat, tugas, risiko, "
         "pertanyaan yang belum terjawab, atau informasi yang bisa membuat pembaca ketinggalan konteks. "
         "Jika tidak ada hal penting, katakan persis: Tidak ada informasi penting. "
-        "Tulis dalam bahasa Indonesia dengan bagian: Ringkasan penting, Keputusan dan tugas, "
-        "Berita atau perubahan, dan Pertanyaan terbuka. Jangan mengarang.\n\n" + transcript
+        f"Tulis dalam {target_language} dengan format rapi berikut:\n"
+        "RINGKASAN PENTING\n- poin singkat\n\n"
+        "KEPUTUSAN DAN TUGAS\n- siapa melakukan apa dan kapan\n\n"
+        "BERITA ATAU PERUBAHAN\n- fakta atau perubahan penting\n\n"
+        "PERTANYAAN TERBUKA\n- hal yang belum jelas\n"
+        "Jika bagian tidak ada, tulis '- Tidak ada'. Jangan mengarang.\n\n" + transcript
     )
     return await hermes_completion(prompt, "Anda adalah editor berita yang teliti dan anti-halu.")
 
@@ -287,6 +323,7 @@ telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("summary", summary_command))
 telegram_app.add_handler(CommandHandler("digest", summary_command))
 telegram_app.add_handler(CommandHandler("translate", translate_command))
+telegram_app.add_handler(CommandHandler("translate_summary", translate_summary_command))
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, collect_message)
 )
