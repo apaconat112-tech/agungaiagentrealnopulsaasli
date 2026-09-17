@@ -127,12 +127,22 @@ async def collect_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
-        "Bot aktif.\n\n"
-        "Gunakan /connect untuk menghubungkan akun Telegram Anda.\n"
-        "Gunakan /grup untuk memilih grup dari akun Anda.\n"
-        "Grup: admin gunakan /summary.\n"
-        "Privat: forward chat penting ke sini, lalu gunakan /summary.\n"
-        "Terjemahan: /translate en teks atau reply pesan dengan /translate id."
+        "Halo, saya Hermes, bot AI untuk membantu Anda mengikuti percakapan Telegram.\n\n"
+        "Yang bisa saya lakukan:\n"
+        "- Memilih grup dari akun Telegram Anda tanpa memasukkan bot ke grup.\n"
+        "- Merangkum berita, keputusan, tugas, perubahan, dan pertanyaan penting.\n"
+        "- Menerjemahkan teks atau ringkasan ke berbagai bahasa.\n\n"
+        "Cara mulai:\n"
+        "1. /connect - hubungkan akun Telegram lewat halaman HTTPS.\n"
+        "2. /grup - tampilkan daftar grup Anda.\n"
+        "3. Tekan grup yang ingin diringkas.\n"
+        "4. /summary_group - buat ringkasan grup terpilih.\n\n"
+        "Perintah lain:\n"
+        "/summary_group en - ringkasan dalam Inggris\n"
+        "/translate ja teks - terjemahkan teks\n"
+        "/translate_summary en - terjemahkan ringkasan terakhir\n"
+        "/help - lihat panduan lengkap\n\n"
+        "Saya hanya mengakses grup setelah Anda menghubungkan akun dan memilihnya."
     )
 
 
