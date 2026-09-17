@@ -49,7 +49,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/messages.db")
 AI_BASE_URL = os.getenv("HERMES_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai").rstrip("/")
 AI_API_KEY = os.environ["HERMES_API_KEY"]
-AI_MODEL = os.getenv("HERMES_MODEL", "gemini-2.0-flash")
+AI_MODEL = os.getenv("HERMES_MODEL", "gemini-3.6-flash")
 TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "Afung_12bot").lstrip("@")
 MAX_SUMMARY_CHARS = int(os.getenv("MAX_SUMMARY_CHARS", "12000"))
 
