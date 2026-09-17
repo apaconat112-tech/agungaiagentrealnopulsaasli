@@ -20,7 +20,13 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    ApiIdInvalidError,
+    FloodWaitError,
+    PhoneNumberBannedError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
+)
 
 from telegram_user import (
     init_user_table,
@@ -501,10 +507,24 @@ async def login_phone(token: str, value: str = Form(...)):
     try:
         await client.connect()
         sent_code = await client.send_code_request(phone)
-    except Exception:
+    except PhoneNumberInvalidError:
+        await client.disconnect()
+        return login_page(token, "Nomor tidak valid. Gunakan format +628xxxxxxxxxx.")
+    except PhoneNumberBannedError:
+        await client.disconnect()
+        return login_page(token, "Nomor Telegram ini diblokir Telegram.")
+    except ApiIdInvalidError:
+        await client.disconnect()
+        logger.error("Telegram API ID or hash is invalid")
+        return login_page(token, "TELEGRAM_API_ID atau TELEGRAM_API_HASH di Railway tidak valid.")
+    except FloodWaitError as error:
+        await client.disconnect()
+        return login_page(token, f"Terlalu banyak percobaan. Tunggu {error.seconds} detik.")
+    except Exception as error:
         await client.disconnect()
         logger.exception("Telegram web login code request failed")
-        return login_page(token, "Tidak bisa meminta kode. Periksa nomor dan coba lagi.")
+        logger.error("Telegram login error type: %s", type(error).__name__)
+        return login_page(token, f"Telegram menolak permintaan ({type(error).__name__}). Cek Railway Logs.")
     login.update(client=client, phone=phone, phone_code_hash=sent_code.phone_code_hash)
     return login_page(token, step="code")
 
