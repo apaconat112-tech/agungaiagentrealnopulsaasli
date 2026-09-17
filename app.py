@@ -563,10 +563,16 @@ async def finish_web_login(token: str, login: dict):
     client = login["client"]
     try:
         save_session(login["user_id"], client.session.save())
-    except Exception:
+    except Exception as error:
         logger.exception("Could not save Telegram session")
         await client.disconnect()
-        return HTMLResponse(login_page(token, "Session gagal disimpan. Periksa koneksi database Railway."), status_code=500)
+        return HTMLResponse(
+            login_page(
+                token,
+                f"Session gagal disimpan ({type(error).__name__}). Buka Railway Logs.",
+            ),
+            status_code=500,
+        )
     finally:
         if not client.is_connected():
             pending_logins.pop(token, None)
