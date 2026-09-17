@@ -248,9 +248,12 @@ async def group_summary_command(update: Update, context: ContextTypes.DEFAULT_TY
             f"[{message['created_at']}] {message['name']}: {message['text']}" for message in messages
         )
         summary = await summarize_with_hermes(transcript, 24, target_language)
-    except Exception:
+    except Exception as error:
         logger.exception("Selected group summary failed")
-        await update.effective_message.reply_text("Gagal mengambil atau merangkum grup tersebut.")
+        await update.effective_message.reply_text(
+            f"Gagal mengambil atau merangkum grup ({type(error).__name__}). "
+            "Coba lagi setelah deployment terbaru aktif."
+        )
         return
     context.user_data["last_summary"] = summary
     for part in split_message(summary):
