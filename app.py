@@ -47,9 +47,9 @@ BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 WEBHOOK_URL = os.environ["WEBHOOK_URL"].rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/messages.db")
-HERMES_BASE_URL = os.getenv("HERMES_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-HERMES_API_KEY = os.environ["HERMES_API_KEY"]
-HERMES_MODEL = os.getenv("HERMES_MODEL", "Hermes-3-Llama-3.1-8B")
+AI_BASE_URL = os.getenv("HERMES_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai").rstrip("/")
+AI_API_KEY = os.environ["HERMES_API_KEY"]
+AI_MODEL = os.getenv("HERMES_MODEL", "gemini-2.0-flash")
 TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "Afung_12bot").lstrip("@")
 MAX_SUMMARY_CHARS = int(os.getenv("MAX_SUMMARY_CHARS", "12000"))
 
@@ -436,7 +436,7 @@ async def summarize_with_hermes(
         "PERTANYAAN TERBUKA\n- hal yang belum jelas\n"
         "Jika bagian tidak ada, tulis '- Tidak ada'. Jangan mengarang.\n\n" + transcript
     )
-    return await hermes_completion(prompt, "Anda adalah editor berita yang teliti dan anti-halu.")
+    return await ai_completion(prompt, "Anda adalah editor berita yang teliti dan anti-halu.")
 
 
 async def translate_with_hermes(text: str, target_language: str) -> str:
@@ -444,16 +444,16 @@ async def translate_with_hermes(text: str, target_language: str) -> str:
         f"Terjemahkan teks berikut ke {target_language}. Pertahankan makna, nama, angka, "
         "tautan, dan format. Jangan beri penjelasan tambahan.\n\n{text}"
     )
-    return await hermes_completion(prompt, "Anda adalah penerjemah profesional yang akurat.")
+    return await ai_completion(prompt, "Anda adalah penerjemah profesional yang akurat.")
 
 
-async def hermes_completion(prompt: str, system_message: str) -> str:
+async def ai_completion(prompt: str, system_message: str) -> str:
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post(
-            f"{HERMES_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {HERMES_API_KEY}"},
+            f"{AI_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {AI_API_KEY}"},
             json={
-                "model": HERMES_MODEL,
+                "model": AI_MODEL,
                 "temperature": 0.2,
                 "max_tokens": 800,
                 "messages": [
@@ -467,7 +467,7 @@ async def hermes_completion(prompt: str, system_message: str) -> str:
         )
         if response.is_error:
             detail = response.text.replace("\n", " ")[:300]
-            raise RuntimeError(f"Hermes API HTTP {response.status_code}: {detail}")
+            raise RuntimeError(f"AI API HTTP {response.status_code}: {detail}")
         payload = response.json()
     return payload["choices"][0]["message"]["content"].strip()
 

@@ -1,6 +1,6 @@
 # Hermes Telegram Summarizer
 
-Bot Telegram cloud-ready untuk menyimpan percakapan grup dan membuat ringkasan dengan Hermes melalui API yang kompatibel dengan OpenAI Chat Completions.
+Bot Telegram cloud-ready untuk menyimpan percakapan grup dan membuat ringkasan dengan Gemini melalui API yang kompatibel dengan OpenAI Chat Completions.
 
 ## Fitur
 
