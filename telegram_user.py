@@ -120,6 +120,24 @@ async def list_groups(user_id: int) -> list[dict[str, str | int]]:
     return groups
 
 
+async def delete_legacy_group_lists(user_id: int, bot_username: str) -> None:
+    session = load_session(user_id)
+    if not session:
+        return
+    client = new_client(session)
+    try:
+        async with client:
+            entity = await client.get_entity(bot_username)
+            old_messages = []
+            async for message in client.iter_messages(entity, limit=100):
+                if message.message and message.message.startswith("Berikut daftar grup Telegram"):
+                    old_messages.append(message.id)
+            if old_messages:
+                await client.delete_messages(entity, old_messages, revoke=True)
+    except Exception:
+        return
+
+
 async def read_group_messages(user_id: int, group_id: int, limit: int = 200) -> list[dict[str, str]]:
     session = load_session(user_id)
     if not session:

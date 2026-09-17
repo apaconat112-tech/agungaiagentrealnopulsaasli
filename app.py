@@ -31,6 +31,7 @@ from telethon.errors import (
 from telegram_user import (
     init_user_table,
     list_groups,
+    delete_legacy_group_lists,
     new_client,
     read_group_messages,
     load_user_state,
@@ -165,6 +166,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logger.debug("Previous group list could not be deleted", exc_info=True)
     try:
+        await delete_legacy_group_lists(update.effective_user.id, TELEGRAM_BOT_USERNAME)
         groups = await list_groups(update.effective_user.id)
     except Exception as error:
         await update.effective_message.reply_text(str(error))
