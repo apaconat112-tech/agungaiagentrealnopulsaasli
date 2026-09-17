@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY app.py telegram_user.py .
 RUN mkdir -p /app/data
 
 EXPOSE 8000
