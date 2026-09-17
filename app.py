@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import (
@@ -462,13 +463,13 @@ def login_page(token: str, message: str = "", step: str = "phone") -> str:
     return f"""<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hubungkan Telegram</title><style>body{{font-family:system-ui;max-width:520px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}main{{background:#202020;padding:24px;border-radius:12px}}input,button{{width:100%;box-sizing:border-box;padding:12px;margin-top:8px;border-radius:8px;border:1px solid #555;font-size:16px}}button{{background:#7c3aed;color:white;border:0;margin-top:18px}}.note{{color:#aaa;line-height:1.5}}.error{{color:#ff9b9b}}</style></head><body><main><h1>Hubungkan akun Telegram</h1><p class="note">Data login dipakai sementara dan tidak disimpan. Jangan bagikan link ini.</p>{f'<p class="error">{message}</p>' if message else ''}<form method="post" action="/login/{token}/{field}"><label>{label}</label><input name="value" type="password" autocomplete="off" required><button type="submit">Lanjutkan</button></form></main></body></html>"""
 
 
-@api.get("/login/{token}")
+@api.get("/login/{token}", response_class=HTMLResponse)
 async def login_form(token: str):
     get_pending_login(token)
     return login_page(token)
 
 
-@api.post("/login/{token}/phone")
+@api.post("/login/{token}/phone", response_class=HTMLResponse)
 async def login_phone(token: str, value: str = Form(...)):
     login = get_pending_login(token)
     phone = value.strip()
@@ -486,7 +487,7 @@ async def login_phone(token: str, value: str = Form(...)):
     return login_page(token, step="code")
 
 
-@api.post("/login/{token}/code")
+@api.post("/login/{token}/code", response_class=HTMLResponse)
 async def login_code(token: str, value: str = Form(...)):
     login = get_pending_login(token)
     client = login.get("client")
@@ -502,7 +503,7 @@ async def login_code(token: str, value: str = Form(...)):
     return await finish_web_login(token, login)
 
 
-@api.post("/login/{token}/password")
+@api.post("/login/{token}/password", response_class=HTMLResponse)
 async def login_password(token: str, value: str = Form(...)):
     login = get_pending_login(token)
     client = login.get("client")
@@ -522,7 +523,10 @@ async def finish_web_login(token: str, login: dict):
     await client.disconnect()
     pending_logins.pop(token, None)
     await telegram_app.bot.send_message(login["user_id"], "Akun berhasil terhubung. Kirim /grup untuk memilih grup.")
-    return "<h2>Berhasil</h2><p>Akun Telegram sudah terhubung. Kembali ke Telegram dan kirim /grup.</p>"
+    return HTMLResponse(
+        "<h2>Berhasil</h2><p>Akun Telegram sudah terhubung. "
+        "Kembali ke Telegram dan kirim /grup.</p>"
+    )
 
 
 @api.post("/telegram/webhook")
