@@ -27,7 +27,9 @@ from telegram_user import (
     list_groups,
     new_client,
     read_group_messages,
+    load_user_state,
     save_session,
+    save_user_state,
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -156,7 +158,8 @@ def get_pending_login(token: str) -> dict:
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
         return
-    previous_message_id = context.user_data.get("groups_message_id")
+    state = load_user_state(update.effective_user.id)
+    previous_message_id = state["group_message_id"] if state else None
     if previous_message_id:
         try:
             await context.bot.delete_message(update.effective_chat.id, previous_message_id)
@@ -178,7 +181,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     group_message = await update.effective_message.reply_text(
         "Pilih grup yang ingin diringkas:", reply_markup=InlineKeyboardMarkup(buttons)
     )
-    context.user_data["groups_message_id"] = group_message.message_id
+    save_user_state(update.effective_user.id, group_message_id=group_message.message_id)
 
 
 async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -188,6 +191,11 @@ async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     group_name = context.user_data.get("groups", {}).get(group_id, "Grup terpilih")
     context.user_data["selected_group_id"] = int(group_id)
     context.user_data["selected_group_name"] = group_name
+    save_user_state(
+        update.effective_user.id,
+        selected_group_id=int(group_id),
+        selected_group_name=group_name,
+    )
     await query.edit_message_text(
         f"Grup dipilih: {group_name}\nKirim /summary_group untuk merangkum 200 pesan terakhir."
     )
@@ -197,6 +205,9 @@ async def group_summary_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
         return
     group_id = context.user_data.get("selected_group_id")
+    if not group_id:
+        state = load_user_state(update.effective_user.id)
+        group_id = state["selected_group_id"] if state else None
     if not group_id:
         await update.effective_message.reply_text("Kirim /grup dulu, lalu pilih grup.")
         return

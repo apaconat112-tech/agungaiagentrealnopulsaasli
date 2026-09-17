@@ -30,6 +30,38 @@ def init_user_table() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_state (
+                user_id INTEGER PRIMARY KEY,
+                group_message_id INTEGER,
+                selected_group_id INTEGER,
+                selected_group_name TEXT
+            )
+            """
+        )
+
+
+def save_user_state(user_id: int, **values: int | str | None) -> None:
+    allowed = {"group_message_id", "selected_group_id", "selected_group_name"}
+    values = {key: value for key, value in values.items() if key in allowed}
+    if not values:
+        return
+    columns = ", ".join(values)
+    assignments = ", ".join(f"{column} = excluded.{column}" for column in values)
+    with _connection() as connection:
+        connection.execute(
+            f"INSERT INTO user_state (user_id, {columns}) VALUES (?, {', '.join('?' for _ in values)}) "
+            f"ON CONFLICT(user_id) DO UPDATE SET {assignments}",
+            (user_id, *values.values()),
+        )
+
+
+def load_user_state(user_id: int) -> sqlite3.Row | None:
+    with _connection() as connection:
+        return connection.execute(
+            "SELECT * FROM user_state WHERE user_id = ?", (user_id,)
+        ).fetchone()
 
 
 def _cipher() -> Fernet:
