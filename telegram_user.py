@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from cryptography.fernet import Fernet
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from database import get_db
+from database import get_db, using_postgres
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/messages.db")
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
@@ -16,24 +16,28 @@ SESSION_ENCRYPTION_KEY = os.getenv("SESSION_ENCRYPTION_KEY", "")
 def init_user_table() -> None:
     with get_db() as connection:
         connection.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS telegram_accounts (
-                user_id INTEGER PRIMARY KEY,
+                user_id {"BIGINT" if using_postgres() else "INTEGER"} PRIMARY KEY,
                 session_token TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             """
         )
         connection.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS user_state (
-                user_id INTEGER PRIMARY KEY,
+                user_id {"BIGINT" if using_postgres() else "INTEGER"} PRIMARY KEY,
                 group_message_id INTEGER,
-                selected_group_id INTEGER,
+                selected_group_id {"BIGINT" if using_postgres() else "INTEGER"},
                 selected_group_name TEXT
             )
             """
         )
+        if using_postgres():
+            connection.execute("ALTER TABLE telegram_accounts ALTER COLUMN user_id TYPE BIGINT")
+            connection.execute("ALTER TABLE user_state ALTER COLUMN user_id TYPE BIGINT")
+            connection.execute("ALTER TABLE user_state ALTER COLUMN selected_group_id TYPE BIGINT")
 
 
 def save_user_state(user_id: int, **values: int | str | None) -> None:
