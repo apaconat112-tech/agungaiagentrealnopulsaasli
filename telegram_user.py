@@ -1,4 +1,5 @@
 import os
+import base64
 from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
@@ -60,7 +61,14 @@ def load_user_state(user_id: int):
 def _cipher() -> Fernet:
     if not SESSION_ENCRYPTION_KEY:
         raise RuntimeError("SESSION_ENCRYPTION_KEY belum diatur di Railway Variables")
-    return Fernet(SESSION_ENCRYPTION_KEY.encode())
+    try:
+        raw_key = base64.b64decode(SESSION_ENCRYPTION_KEY.encode(), validate=True)
+        urlsafe_key = base64.urlsafe_b64encode(raw_key)
+        return Fernet(urlsafe_key)
+    except Exception as error:
+        raise RuntimeError(
+            "SESSION_ENCRYPTION_KEY tidak valid. Buat key 32-byte Base64 lalu simpan di Railway."
+        ) from error
 
 
 def save_session(user_id: int, session_string: str) -> None:
