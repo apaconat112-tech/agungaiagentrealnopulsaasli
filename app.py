@@ -51,6 +51,7 @@ HERMES_BASE_URL = os.getenv("HERMES_BASE_URL", "https://api.openai.com/v1").rstr
 HERMES_API_KEY = os.environ["HERMES_API_KEY"]
 HERMES_MODEL = os.getenv("HERMES_MODEL", "Hermes-3-Llama-3.1-8B")
 TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "Afung_12bot").lstrip("@")
+MAX_SUMMARY_CHARS = int(os.getenv("MAX_SUMMARY_CHARS", "12000"))
 
 telegram_app = Application.builder().token(BOT_TOKEN).updater(None).build()
 pending_logins: dict[str, dict] = {}
@@ -421,6 +422,7 @@ async def translate_summary_command(update: Update, context: ContextTypes.DEFAUL
 async def summarize_with_hermes(
     transcript: str, hours: int, target_language: str = "Bahasa Indonesia"
 ) -> str:
+    transcript = transcript[-MAX_SUMMARY_CHARS:]
     prompt = (
         f"Analisis percakapan Telegram berikut untuk {hours} jam terakhir. "
         "Abaikan sapaan, basa-basi, candaan, pengulangan, dan pesan tanpa informasi baru. "
@@ -453,6 +455,7 @@ async def hermes_completion(prompt: str, system_message: str) -> str:
             json={
                 "model": HERMES_MODEL,
                 "temperature": 0.2,
+                "max_tokens": 800,
                 "messages": [
                     {
                         "role": "system",
