@@ -424,19 +424,30 @@ async def summarize_with_hermes(
 ) -> str:
     transcript = transcript[-MAX_SUMMARY_CHARS:]
     prompt = (
-        f"Analisis percakapan Telegram berikut untuk {hours} jam terakhir. "
-        "Abaikan sapaan, basa-basi, candaan, pengulangan, dan pesan tanpa informasi baru. "
-        "Pertahankan hanya berita, fakta, perubahan penting, keputusan, tenggat, tugas, risiko, "
-        "pertanyaan yang belum terjawab, atau informasi yang bisa membuat pembaca ketinggalan konteks. "
-        "Jika tidak ada hal penting, katakan persis: Tidak ada informasi penting. "
-        f"Tulis dalam {target_language} dengan format rapi berikut:\n"
-        "RINGKASAN PENTING\n- poin singkat\n\n"
-        "KEPUTUSAN DAN TUGAS\n- siapa melakukan apa dan kapan\n\n"
-        "BERITA ATAU PERUBAHAN\n- fakta atau perubahan penting\n\n"
-        "PERTANYAAN TERBUKA\n- hal yang belum jelas\n"
-        "Jika bagian tidak ada, tulis '- Tidak ada'. Jangan mengarang.\n\n" + transcript
+        f"Anda sedang menyusun ringkasan percakapan Telegram untuk {hours} jam terakhir. "
+        f"Tulis dalam {target_language}. Hasil harus informatif dan mudah dipindai.\n\n"
+        "ATURAN:\n"
+        "- Jangan menulis proses berpikir, komentar meta, atau kalimat seperti 'but let's evaluate'.\n"
+        "- Gabungkan pesan yang membahas topik sama.\n"
+        "- Jangan mengarang dan jangan mengulang isi pesan.\n"
+        "- Ambil semua topik penting, bukan hanya satu pesan.\n"
+        "- Jika bagian benar-benar kosong, tulis '- Tidak ada'.\n\n"
+        "FORMAT WAJIB:\n"
+        "RINGKASAN UTAMA\n"
+        "- 3 sampai 7 poin paling penting dari percakapan.\n\n"
+        "BERITA DAN PERUBAHAN\n"
+        "- Informasi baru, pengumuman, atau perubahan yang dibahas.\n\n"
+        "KEPUTUSAN DAN TUGAS\n"
+        "- Keputusan, nama penanggung jawab, dan tenggat jika disebutkan.\n\n"
+        "PERTANYAAN ATAU RISIKO\n"
+        "- Hal yang belum terjawab atau berpotensi menjadi masalah.\n\n"
+        "Berikut isi percakapannya:\n" + transcript
     )
-    return await ai_completion(prompt, "Anda adalah editor berita yang teliti dan anti-halu.")
+    return await ai_completion(
+        prompt,
+        "Anda adalah editor ringkasan Telegram. Keluarkan hanya ringkasan final, "
+        "tanpa pembukaan, tanpa analisis proses, dan tanpa komentar meta.",
+    )
 
 
 async def translate_with_hermes(text: str, target_language: str) -> str:
@@ -455,7 +466,7 @@ async def ai_completion(prompt: str, system_message: str) -> str:
             json={
                 "model": AI_MODEL,
                 "temperature": 0.2,
-                "max_tokens": 800,
+                "max_tokens": 1200,
                 "messages": [
                     {
                         "role": "system",
