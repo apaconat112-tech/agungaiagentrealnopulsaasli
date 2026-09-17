@@ -29,7 +29,7 @@ Webhook membutuhkan URL HTTPS publik. Saat development, gunakan tunnel seperti C
 
 ## Deploy cloud
 
-Deploy sebagai web service Docker. Set semua variable dari `.env.example` di dashboard provider, gunakan port `8000`, dan pasang persistent volume pada `/app/data` agar database tidak hilang saat container restart.
+Deploy sebagai web service Docker. Set semua variable dari `.env.example` di dashboard provider dan gunakan port `8000`. Di Railway, hubungkan PostgreSQL ke service bot melalui reference variable `DATABASE_URL=${{Postgres.DATABASE_URL}}`; bot akan memakai PostgreSQL secara otomatis.
 
 Setelah deploy, tambahkan bot ke grup dan matikan **Group Privacy** bot melalui BotFather agar bot dapat membaca pesan biasa. Bot hanya menyimpan teks yang dikirim setelah bot aktif.
 
@@ -39,7 +39,7 @@ Untuk mode privat, buka chat bot lalu forward pesan yang ingin dipantau. Kirim `
 
 Set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, dan `SESSION_ENCRYPTION_KEY` sebagai secret cloud. Di chat privat bot, jalankan `/connect`, buka link HTTPS yang diberikan, lalu masukkan nomor, kode login, dan password 2FA hanya di halaman tersebut. Setelah terhubung, jalankan `/grup`, pilih tombol grup, lalu gunakan `/summary_group` atau `/summary_group en`. Session setiap pengguna disimpan terenkripsi; jangan mengirim kode OTP atau session ke siapa pun.
 
-Pasang Railway Volume dengan mount path `/app/data`. Tanpa Volume, database dan session bisa hilang setiap redeploy sehingga pengguna diminta login lagi. Jangan mengubah `SESSION_ENCRYPTION_KEY` setelah session tersimpan.
+PostgreSQL menyimpan database dan session secara persisten sehingga login tidak hilang saat redeploy. Jangan mengubah `SESSION_ENCRYPTION_KEY` setelah session tersimpan.
 
 ## Keamanan
 

@@ -1,11 +1,10 @@
 import logging
 import os
 import secrets
-import sqlite3
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, Form, Header, HTTPException, Request
@@ -31,6 +30,7 @@ from telegram_user import (
     save_session,
     save_user_state,
 )
+from database import get_db, using_postgres
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -47,26 +47,17 @@ telegram_app = Application.builder().token(BOT_TOKEN).updater(None).build()
 pending_logins: dict[str, dict] = {}
 
 
-def get_db() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 def init_db() -> None:
     with get_db() as connection:
         connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
+            """CREATE TABLE IF NOT EXISTS messages (
+                id %s,
+                chat_id BIGINT NOT NULL,
                 chat_title TEXT NOT NULL,
                 user_name TEXT NOT NULL,
                 text TEXT NOT NULL,
                 created_at TEXT NOT NULL
-            )
-            """
+            )""" % ("BIGSERIAL PRIMARY KEY" if using_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT")
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at)"
@@ -82,7 +73,7 @@ def save_message(chat_id: int, chat_title: str, user_name: str, text: str) -> No
         )
 
 
-def read_messages(chat_id: int, hours: int) -> list[sqlite3.Row]:
+def read_messages(chat_id: int, hours: int) -> list[Any]:
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     with get_db() as connection:
         return connection.execute(

@@ -1,5 +1,6 @@
 fastapi==0.115.6
 cryptography==44.0.0
+psycopg[binary]==3.2.3
 httpx==0.28.1
 python-multipart==0.0.20
 python-telegram-bot==21.10

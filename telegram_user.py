@@ -1,10 +1,10 @@
 import os
-import sqlite3
 from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from database import get_db
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/messages.db")
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
@@ -12,15 +12,8 @@ API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 SESSION_ENCRYPTION_KEY = os.getenv("SESSION_ENCRYPTION_KEY", "")
 
 
-def _connection() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 def init_user_table() -> None:
-    with _connection() as connection:
+    with get_db() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS telegram_accounts (
@@ -49,7 +42,7 @@ def save_user_state(user_id: int, **values: int | str | None) -> None:
         return
     columns = ", ".join(values)
     assignments = ", ".join(f"{column} = excluded.{column}" for column in values)
-    with _connection() as connection:
+    with get_db() as connection:
         connection.execute(
             f"INSERT INTO user_state (user_id, {columns}) VALUES (?, {', '.join('?' for _ in values)}) "
             f"ON CONFLICT(user_id) DO UPDATE SET {assignments}",
@@ -57,8 +50,8 @@ def save_user_state(user_id: int, **values: int | str | None) -> None:
         )
 
 
-def load_user_state(user_id: int) -> sqlite3.Row | None:
-    with _connection() as connection:
+def load_user_state(user_id: int):
+    with get_db() as connection:
         return connection.execute(
             "SELECT * FROM user_state WHERE user_id = ?", (user_id,)
         ).fetchone()
@@ -72,15 +65,16 @@ def _cipher() -> Fernet:
 
 def save_session(user_id: int, session_string: str) -> None:
     encrypted = _cipher().encrypt(session_string.encode()).decode()
-    with _connection() as connection:
+    with get_db() as connection:
         connection.execute(
-            "INSERT OR REPLACE INTO telegram_accounts (user_id, session_token, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO telegram_accounts (user_id, session_token, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET session_token = excluded.session_token, created_at = excluded.created_at",
             (user_id, encrypted, datetime.now(timezone.utc).isoformat()),
         )
 
 
 def load_session(user_id: int) -> str | None:
-    with _connection() as connection:
+    with get_db() as connection:
         row = connection.execute(
             "SELECT session_token FROM telegram_accounts WHERE user_id = ?", (user_id,)
         ).fetchone()
