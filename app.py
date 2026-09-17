@@ -156,6 +156,12 @@ def get_pending_login(token: str) -> dict:
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or update.effective_chat.type != ChatType.PRIVATE:
         return
+    previous_message_id = context.user_data.get("groups_message_id")
+    if previous_message_id:
+        try:
+            await context.bot.delete_message(update.effective_chat.id, previous_message_id)
+        except Exception:
+            logger.debug("Previous group list could not be deleted", exc_info=True)
     try:
         groups = await list_groups(update.effective_user.id)
     except Exception as error:
@@ -169,9 +175,10 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton(str(group["name"])[:55], callback_data=f"group:{group['id']}")]
         for group in groups[:40]
     ]
-    await update.effective_message.reply_text(
+    group_message = await update.effective_message.reply_text(
         "Pilih grup yang ingin diringkas:", reply_markup=InlineKeyboardMarkup(buttons)
     )
+    context.user_data["groups_message_id"] = group_message.message_id
 
 
 async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
